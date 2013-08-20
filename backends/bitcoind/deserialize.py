@@ -388,7 +388,11 @@ def get_address_from_input_script(bytes):
 
 
 def get_address_from_output_script(bytes):
-    decoded = [ x for x in script_GetOp(bytes) ]
+    try:
+        decoded = [ x for x in script_GetOp(bytes) ]
+    except Exception:
+        print '!! exception in get_address_from_output_script'
+        return "None"
 
     # The Genesis Block, self-payments, and pay-by-IP-address payments look like:
     # 65 BYTES:... CHECKSIG
@@ -407,6 +411,12 @@ def get_address_from_output_script(bytes):
     match = [opcodes.OP_DUP, opcodes.OP_HASH160, opcodes.OP_PUSHDATA4, opcodes.OP_EQUALVERIFY, opcodes.OP_CHECKSIG]
     if match_decoded(decoded, match):
         return hash_160_to_bc_address(decoded[2][1])
+
+    # Transfer to M-OF-N (greenaddress)
+    if decoded and decoded[-1][0] == opcodes.OP_CHECKMULTISIG:
+        for v in decoded[::-1]:
+            if v[1]:
+               return hash_160_to_bc_address(hash_160(v[1]))
 
     # strange tx
     match = [opcodes.OP_DUP, opcodes.OP_HASH160, opcodes.OP_PUSHDATA4, opcodes.OP_EQUALVERIFY, opcodes.OP_CHECKSIG, opcodes.OP_NOP]

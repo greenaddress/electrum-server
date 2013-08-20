@@ -13,6 +13,7 @@ import urllib
 
 from backends.bitcoind import deserialize
 from processor import Processor, print_log
+import utils
 from utils import *
 
 
@@ -67,6 +68,12 @@ class BlockchainProcessor(Processor):
         self.sent_height = 0
         self.sent_header = None
 
+        coin = config.get('server', 'coin')
+        if coin == 'testnet3':
+            utils.addrtype = 111
+        else:
+            utils.addrtype = 0
+
         try:
             hist = self.deserialize(self.db.Get('height'))
             self.last_hash, self.height, db_version = hist[0]
@@ -76,7 +83,10 @@ class BlockchainProcessor(Processor):
             traceback.print_exc(file=sys.stdout)
             print_log('initializing database')
             self.height = 0
-            self.last_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
+            if coin == 'testnet3':
+                self.last_hash = '000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943'
+            else:
+                self.last_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
             db_version = self.db_version
 
         # check version
@@ -123,7 +133,7 @@ class BlockchainProcessor(Processor):
         return s
 
     def serialize_item(self, txid, txpos, height, spent=chr(0)):
-        s = (txid + int_to_hex(txpos, 4) + int_to_hex(height, 3)).decode('hex') + spent 
+        s = (txid + int_to_hex(txpos, 4) + int_to_hex(height, 3)).decode('hex') + spent
         return s
 
     def deserialize_item(self,s):
@@ -383,7 +393,7 @@ class BlockchainProcessor(Processor):
         l = len(serialized_hist)/80
         for i in range(l):
             if len(serialized_hist)/80 < self.pruning_limit: break
-            item = serialized_hist[80*i:80*(i+1)] 
+            item = serialized_hist[80*i:80*(i+1)]
             if item[39:40] == chr(1):
                 assert item[79:80] == chr(2)
                 serialized_hist = serialized_hist[0:80*i] + serialized_hist[80*(i+1):]
@@ -395,10 +405,10 @@ class BlockchainProcessor(Processor):
         # restore removed items
         serialized_hist = self.batch_list[addr]
 
-        if undo.get(addr) is not None: 
+        if undo.get(addr) is not None:
             itemlist = undo.pop(addr)
         else:
-            return 
+            return
 
         if not itemlist: return
 
@@ -406,12 +416,12 @@ class BlockchainProcessor(Processor):
         tx_item = ''
         for i in range(l-1, -1, -1):
             if tx_item == '':
-                if not itemlist: 
+                if not itemlist:
                     break
                 else:
                     tx_item = itemlist.pop(-1) # get the last element
                     tx_height = int(rev_hex(tx_item[36:39].encode('hex')), 16)
-            
+
             item = serialized_hist[80*i:80*(i+1)]
             item_height = int(rev_hex(item[36:39].encode('hex')), 16)
 
@@ -434,7 +444,7 @@ class BlockchainProcessor(Processor):
                 if is_spent:
                     new_item = item[0:39] + chr(1) + self.serialize_item(txid, index, height, chr(2))
                 else:
-                    new_item = item[0:39] + chr(0) + chr(0)*40 
+                    new_item = item[0:39] + chr(0) + chr(0)*40
                 serialized_hist = serialized_hist[0:80*i] + new_item + serialized_hist[80*(i+1):]
                 break
         else:
@@ -562,7 +572,7 @@ class BlockchainProcessor(Processor):
             if not revert:
 
                 undo = { 'prev_addr':[] } # contains the list of pruned items for each address in the tx; also, 'prev_addr' is a list of prev addresses
-                
+
                 prev_addr = []
                 for i, x in enumerate(tx.get('inputs')):
                     txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
@@ -576,7 +586,7 @@ class BlockchainProcessor(Processor):
                     self.prune_history(addr, undo)
                     prev_addr.append(addr)
 
-                undo['prev_addr'] = prev_addr 
+                undo['prev_addr'] = prev_addr
 
                 # here I add only the outputs to history; maybe I want to add inputs too (that's in the other loop)
                 for x in tx.get('outputs'):
@@ -604,7 +614,7 @@ class BlockchainProcessor(Processor):
 
                 assert undo == {}
 
-        if revert: 
+        if revert:
             assert undo_info == {}
 
 
