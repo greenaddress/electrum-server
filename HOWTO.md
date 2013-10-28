@@ -31,6 +31,10 @@ notation with shell redirection ('command < file' or 'command > file')!
 Lines that lack hash or dollar signs are pastes from config files. They
 should be copied verbatim or adapted, without the indentation tab.
 
+apt-get install commands are suggestions for required dependencies.
+They conform to an Ubuntu 13.04 system but may well work with Debian
+or earlier and later versions of Ubuntu.
+
 Prerequisites
 -------------
 
@@ -71,7 +75,7 @@ We will also use the `~/bin` directory to keep locally installed files
 (others might want to use `/usr/local/bin` instead). We will download source
 code files to the `~/src` directory.
 
-    # sudo adduser bitcoin
+    # sudo adduser bitcoin --disabled-password
     # su - bitcoin
     $ mkdir ~/bin ~/src
     $ echo $PATH
@@ -88,23 +92,26 @@ our ~/bin directory:
 
     $ mkdir -p ~/src/electrum
     $ cd ~/src/electrum
+    $ sudo apt-get install git
     $ git clone https://github.com/spesmilo/electrum-server.git server
     $ chmod +x ~/src/electrum/server/server.py
     $ ln -s ~/src/electrum/server/server.py ~/bin/electrum-server
 
-### Step 3. Download Bitcoind stable from git & patch it
+### Step 3. Download Bitcoind stable & patch it
 
-In order for the latest versions of Electrum to work properly we will need to use 
-bitcoind 0.8.1 stable or higher. It can be downloaded from github and 
-it needs to be patched with an electrum specific patch.
+In order for the latest versions of Electrum to work properly we currently recommend bitcoind 0.8.5 stable.  
+0.8.5 can be downloaded from github or sourceforge and it needs to be patched with an electrum specific patch.
+bitcoin@master i.e. git head may not currently work with electrum-server even if the patch applies cleanly.
 
-    $ cd ~/src && wget http://sourceforge.net/projects/bitcoin/files/Bitcoin/bitcoin-0.8.3/bitcoin-0.8.3-linux.tar.gz
-    $ tar xfz bitcoin-0.8.3-linux.tar.gz
-    $ cd bitcoin-0.8.3-linux/src
+    $ cd ~/src && wget http://sourceforge.net/projects/bitcoin/files/Bitcoin/bitcoin-0.8.5/bitcoin-0.8.5-linux.tar.gz
+    $ tar xfz bitcoin-0.8.5-linux.tar.gz
+    $ cd bitcoin-0.8.5-linux/src
     $ patch -p1 < ~/src/electrum/server/patch/patch
     $ cd src
+    $ sudo apt-get install make g++ python-leveldb libboost-all-dev libssl-dev libdb++-dev 
     $ make USE_UPNP= -f makefile.unix
-    $ ln -s ~/src/bitcoin-0.8.3-linux/src/src/bitcoind ~/bin/bitcoind
+    $ strip ~/src/bitcoin-0.8.5-linux/src/src/bitcoind
+    $ ln -s ~/src/bitcoin-0.8.5-linux/src/src/bitcoind ~/bin/bitcoind
 
 ### Step 4. Configure and start bitcoind
 
@@ -141,6 +148,7 @@ already installed on your distribution, or can be installed with your
 package manager. Electrum also depends on two Python libraries which we will
 need to install "by hand": `JSONRPClib`.
 
+    $ sudo apt-get install python-setuptools
     $ sudo easy_install jsonrpclib
     $ sudo apt-get install python-openssl
 
@@ -156,7 +164,7 @@ doesn't have the python-leveldb package.
 Electrum server uses leveldb to store transactions. You can choose
 how many spent transactions per address you want to store on the server.
 The default is 100, but there are also servers with 1000 or even 10000.
-Very few addresses have more than 10000 transactions. A limit this high
+Few addresses have more than 10000 transactions. A limit this high
 can be considered to be equivalent to a "full" server. Full servers previously
 used abe to store the blockchain. The use of abe for electrum servers is now
 deprecated.
@@ -190,9 +198,48 @@ Alternatively you can fetch a pre-processed leveldb from the net
 
 You can fetch recent copies of electrum leveldb databases and further instructions 
 from the Electrum full archival server foundry at:
-http://electrum-foundry.no-ip.org/ 
+http://foundry.electrum.org/ 
 
-### Step 9. Configure Electrum server
+
+### Step 9. Create a self-signed SSL cert
+
+To run SSL / HTTPS you need to generate a self-signed certificate
+using openssl. You could just comment out the SSL / HTTPS ports in the config and run 
+without, but this is not recommended.
+
+Use the sample code below to create a self-signed cert with a recommended validity 
+of 5 years. You may supply any information for your sign request to identify your server.
+They are not currently checked by the client except for the validity date.
+When asked for a challenge password just leave it empty and press enter.
+
+    $ openssl genrsa -des3 -passout pass:x -out server.pass.key 2048
+    $ openssl rsa -passin pass:x -in server.pass.key -out server.key
+    writing RSA key
+    $ rm server.pass.key
+    $ openssl req -new -key server.key -out server.csr
+    ...
+    Country Name (2 letter code) [AU]:US
+    State or Province Name (full name) [Some-State]:California
+    Common Name (eg, YOUR name) []: electrum-server.tld
+    ...
+    A challenge password []:
+    ...
+
+    $ openssl x509 -req -days 730 -in server.csr -signkey server.key -out server.crt
+
+The server.crt file is your certificate suitable for the ssl_certfile= parameter and
+server.key corresponds to ssl_keyfile= in your electrum server config
+
+Starting with Electrum 1.9 the client will learn and locally cache the SSL certificate 
+for your server upon the first request to prevent man-in-the middle attacks for all
+further connections.
+
+If your certificate is lost or expires on the server side you currently need to run
+your server with a different server name along with a new certificate for this server.
+Therefore it's a good idea to make an offline backup copy of your certificate and key
+in case you need to restore it.
+
+### Step 10. Configure Electrum server
 
 Electrum reads a config file (/etc/electrum.conf) when starting up. This
 file includes the database setup, bitcoind RPC setup, and a few other
@@ -204,11 +251,29 @@ options.
 Go through the sample config options and set them to your liking.
 If you intend to run the server publicly have a look at README-IRC.md 
 
-If you're looking to run SSL / HTTPS you need to generate a self-signed certificate
-using openssl. Otherwise you can just comment out the SSL / HTTPS ports and run 
-without.
+### Step 11. Tweak your system for running electrum
 
-### Step 10. (Finally!) Run Electrum server
+Electrum server currently needs quite a few file handles to use leveldb. It also requires
+file handles for each connection made to the server. It's good practice to increase the
+open files limit to 16k. This is most easily achived by sticking the value in .bashrc of the
+root user who usually passes this value to all unprivileged user sessions too.
+
+    $ sudo sed -i '$a ulimit -n 16384' /root/.bashrc
+
+We're aware the leveldb part in electrum server may leak some memory and it's good practice to
+to either restart the server once in a while from cron (preferred) or to at least monitor 
+it for crashes and then restart the server. Weekly restarts should be fine for most setups.
+If your server gets a lot of traffic and you have a limited amount of RAM you may need to restart
+more often.
+
+Two more things for you to consider:
+
+1. To increase security you may want to close bitcoind for incoming connections and connect outbound only
+
+2. Consider restarting bitcoind (together with electrum-server) on a weekly basis to clear out unconfirmed
+   transactions from the local the memory pool which did not propagate over the network
+
+### Step 12. (Finally!) Run Electrum server
 
 The magic moment has come: you can now start your Electrum server:
 
@@ -227,7 +292,7 @@ You should also take a look at the 'start' and 'stop' scripts in
 `~/src/electrum/server`. You can use them as a starting point to create a
 init script for your system.
 
-### Step 11. Test the Electrum server
+### Step 13. Test the Electrum server
 
 We will assume you have a working Electrum client, a wallet and some
 transactions history. You should start the client and click on the green
@@ -240,7 +305,7 @@ addresses and transactions history. You can see the number of blocks and
 response time in the Server selection window. You should send/receive some
 bitcoins to confirm that everything is working properly.
 
-### Step 12. Join us on IRC, subscribe to the server thread
+### Step 13. Join us on IRC, subscribe to the server thread
 
 Say hi to the dev crew, other server operators and fans on 
 irc.freenode.net #electrum and we'll try to congratulate you
